@@ -9,7 +9,7 @@ from typing import Iterable, Tuple
 
 import pandas as pd
 
-from .utils import DATA_DIR, POSITIVE_STATUSES, ensure_directories, setup_logging
+from .utils import DATA_DIR, POSITIVE_STATUSES, ensure_directories, setup_logging, MIN_JOB_WORDS
 
 try:
     from google.cloud import bigquery
@@ -26,7 +26,7 @@ WITH pros_last AS (
     ANY_VALUE(recrutador)    AS recrutador,
     ANY_VALUE(comentario)    AS comentario,
     MAX(ultima_atualizacao)  AS dt_last_update,
-    ARRAY_AGG(situacao_candidado IGNORE NULLS ORDER BY ultima_atualizacao DESC LIMIT 1)[OFFSET(0)] AS situacao_candidado_last
+    ARRAY_AGG(situacao_candidado IGNORE NULLS ORDER BY ultima_atualizacao DESC LIMIT 1)[OFFSET(0)] AS situacao_candidato_last
   FROM datathon-470123.silver.vw_prospects_flat 
   GROUP BY 1,2
 )
@@ -38,14 +38,14 @@ SELECT
   a.codigo_profissional, a.nome_candidato, a.email_candidato, a.local_candidato,
   a.nivel_ingles_cand, a.nivel_espanhol_cand, a.nivel_academico_cand, a.nivel_profissional_cand,
   a.conhecimentos_tecnicos, a.experiencias, a.cargo_atual_cand,
-  p.situacao_candidado_last,
+  p.situacao_candidato_last,
   p.recrutador, p.comentario, p.dt_last_update
 FROM datathon-470123.silver.vw_vagas_flat v
 LEFT JOIN pros_last p
   ON p.job_id = v.job_id
 LEFT JOIN datathon-470123.silver.vw_applicant_flat a
   ON a.codigo_profissional = p.codigo_profissional
-WHERE p.situacao_candidado_last IN (
+WHERE p.situacao_candidato_last IN (
     'Aprovado',
     'Não Aprovado pelo Requisitante',
     'Proposta Aceita',
@@ -136,7 +136,7 @@ APPLICANT_COLUMNS = [
 PROSPECT_COLUMNS = [
     "job_id",
     "codigo_profissional",
-    "situacao_candidado_last",
+    "situacao_candidato_last",
     "recrutador",
     "comentario",
     "dt_last_update",
@@ -151,6 +151,8 @@ def dataframe_to_decision_json(df: pd.DataFrame, output_dir: Path = DATA_DIR) ->
     ensure_directories([output_dir])
 
     df = df.copy()
+    if "situacao_candidado_last" in df.columns:
+        df.rename(columns={"situacao_candidado_last": "situacao_candidato_last"}, inplace=True)
     for col in DATE_COLUMNS:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce").dt.strftime("%Y-%m-%d")
@@ -209,10 +211,16 @@ def preprocess_dataset(
         .merge(applicants, on="codigo_profissional", how="left", suffixes=("", "_app"))
     )
 
-    merged.dropna(subset=["situacao_candidado_last", "cv_pt"], inplace=True)
-    merged["situacao_candidado_last"] = merged["situacao_candidado_last"].str.strip()
-    merged["situacao_candidado"] = merged["situacao_candidado_last"].fillna("")
-    merged["label"] = merged["situacao_candidado"].isin(positive).astype(int)
+    if "situacao_candidado_last" in merged.columns:
+        merged.rename(
+            columns={"situacao_candidado_last": "situacao_candidato_last"},
+            inplace=True,
+        )
+
+    merged.dropna(subset=["situacao_candidato_last", "cv_pt"], inplace=True)
+    merged["situacao_candidato_last"] = merged["situacao_candidato_last"].str.strip()
+    merged["situacao_candidato"] = merged["situacao_candidato_last"].fillna("")
+    merged["label"] = merged["situacao_candidato"].isin(positive).astype(int)
 
     merged["competencias_tecnicas"] = merged["competencias_tecnicas"].fillna("")
     merged["principais_atividades"] = merged["principais_atividades"].fillna("")
@@ -221,10 +229,9 @@ def preprocess_dataset(
     merged["experiencias"] = merged["experiencias"].fillna("")
     merged["cv_pt"] = merged["cv_pt"].fillna("")
 
+    # Foco em descrição/competências/senioridade (sem cliente para reduzir ruído)
     merged["job_text"] = (
         merged["titulo_vaga"].fillna("")
-        + " "
-        + merged["cliente"].fillna("")
         + " "
         + merged["competencias_tecnicas"]
         + " "
@@ -233,15 +240,8 @@ def preprocess_dataset(
         + merged["nivel_profissional_req"].fillna("")
     ).str.lower()
 
-    merged["candidate_text"] = (
-        merged["cv_pt"]
-        + " "
-        + merged["conhecimentos_tecnicos"]
-        + " "
-        + merged["experiencias"]
-        + " "
-        + merged["nivel_profissional_cand"].fillna("")
-    ).str.lower()
+    # Apenas o resumo do currículo como texto do candidato
+    merged["candidate_text"] = merged["cv_pt"].astype(str).str.lower()
 
     merged["combined_text"] = (merged["job_text"] + " \n " + merged["candidate_text"]).str.strip()
 
@@ -255,7 +255,9 @@ def preprocess_dataset(
         if col in merged.columns:
             merged[col] = merged[col].fillna("Não informado")
 
-    merged = merged[merged["combined_text"].str.len() > 0]
+    # Remove vagas com descrições vazias ou muito curtas
+    word_counts = merged["job_text"].fillna("").str.split().str.len()
+    merged = merged[(merged["combined_text"].str.len() > 0) & (word_counts >= MIN_JOB_WORDS)]
 
     merged = merged.drop_duplicates(subset=["job_id", "codigo_profissional"], keep="last")
     merged.reset_index(drop=True, inplace=True)

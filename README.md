@@ -42,7 +42,7 @@ pip install -r requirements.txt
 ## Pipeline de Machine Learning
 1. **Pré-processamento** (`src/preprocessing.py`): leitura dos JSON (vagas, prospects, applicants), merge das tabelas, limpeza de textos e criação do rótulo binário com base nos status.
 2. **Engenharia de features** (`src/feature_engineering.py`): TF-IDF na concatenação vaga + candidato, one-hot para atributos categóricos (tipo de contratação, prioridade, senioridade, nível de inglês).
-3. **Treinamento e validação** (`src/train.py`): separação treino/validação estratificada, ajuste do modelo (Logistic Regression), cálculo de métricas (accuracy, precision, recall, F1, ROC-AUC) e serialização do pipeline.
+3. **Treinamento e validação** (`src/train.py`): separação treino/validação estratificada, ajuste do modelo (Logistic Regression com `class_weight=balanced`), cálculo de métricas (accuracy, precision, recall, F1, ROC-AUC) e serialização do pipeline.
 4. **Avaliação** (`src/evaluate.py`): relatório de classificação e matriz de confusão sobre o dataset completo.
 
 Artefatos gravados automaticamente:
@@ -93,8 +93,13 @@ A aplicação lê o modelo serializado, permite escolher uma vaga e exibe o rank
 python3 -m pytest
 ```
 
+## O que mudou no modelo
+- TF-IDF agora usa `min_df=2` e `sublinear_tf` para reduzir ruído.
+- Novas features numéricas no pipeline: similaridade TF-IDF vaga×candidato, sobreposição de habilidades e aderência de senioridade.
+- Balanceamento de classes no `LogisticRegression` para lidar com desbalanceamento dos rótulos.
+
 ## Próximos passos sugeridos
-1. Incorporar análises de fit cultural e engajamento com dados adicionais (ex.: respostas de entrevistas).
-2. Experimentar modelos baseados em embeddings pré-treinados (Sentence Transformers) para comparação com o baseline TF-IDF.
-3. Ampliar o conjunto de features numéricas (tempo de experiência, compatibilidade de senioridade) e criar explicações para o ranking (SHAP/LIME).
-4. Publicar a aplicação no Streamlit Cloud ou infraestrutura interna para feedback de recrutadores.
+1. Ajuste fino automático (Grid/Random Search) em `C` e `max_features` com validação cruzada estratificada.
+2. Embeddings semânticos (ex.: Sentence-BERT) para similaridade robusta vaga×currículo; usar como input adicional ao classificador.
+3. Dicionário de habilidades com sinônimos e pesos por categoria (programação, cloud, dados), e penalização de linguagem não aderente (ex.: Java vs Python).
+4. Explicabilidade do score (ex.: SHAP) e logging de decisões para feedback do time de recrutamento.

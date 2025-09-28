@@ -18,6 +18,8 @@ POSITIVE_STATUSES: set[str] = {
 }
 
 LOG_LEVEL = logging.INFO
+# Aumenta o rigor para ignorar descrições curtas
+MIN_JOB_WORDS = 15
 
 
 def setup_logging(level: int = LOG_LEVEL) -> None:
