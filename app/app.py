@@ -79,9 +79,17 @@ def _styled_table(
 ) -> "pd.io.formats.style.Styler":
     fmt = {col: "{:.2%}" for col in score_cols if col in df.columns}
     style = df.style.format(fmt)
+    # Apply gradient only if matplotlib is available (pandas Styler requires it at render time)
     try:
-        style = style.background_gradient(axis=0, subset=[c for c in score_cols if c in df.columns], cmap="Greens")
+        import importlib.util as _util  # lightweight availability check
+        if _util.find_spec("matplotlib") is not None:
+            style = style.background_gradient(
+                axis=0,
+                subset=[c for c in score_cols if c in df.columns],
+                cmap="Greens",
+            )
     except Exception:
+        # If anything goes wrong (including missing matplotlib), skip the gradient gracefully
         pass
 
     if status_col and status_col in df.columns:
